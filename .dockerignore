@@ -1,0 +1,9 @@
+.git
+data/
+ckpts/
+work_dirs/
+*.pth
+*.pkl
+docs/
+assets/
+figs/
