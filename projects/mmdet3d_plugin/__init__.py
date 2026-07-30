@@ -11,3 +11,12 @@ from .models.opt.adamw import AdamW2
 from .bevformer import *
 from .gemap import *
 from .models.backbones.efficientnet import EfficientNet
+# MapTRv2's LiDAR-only CARLA path (detector/head/transformer/decoder), ported
+# unmodified from MapTR for testing the copied CARLA dataloaders/configs.
+# Reuses GeMap's own gemap.* classes for everything shared/identical between
+# the two codebases (SimpleLoss, PtsL1Loss, ConvFuser, GeometryKernelAttention,
+# GeMapAssigner in place of MapTRAssigner, GeMapNMSFreeCoder in place of
+# MapTRNMSFreeCoder, etc.) instead of duplicating them under the maptr
+# namespace, which would crash mmcv's registries with "already registered"
+# (as EfficientNet already did once for the mmdet-2.28.2 bump).
+from .maptr import *

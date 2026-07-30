@@ -457,3 +457,73 @@ class CustomPointToMultiViewDepth(object):
 
         results['gt_depth'] = depth_map
         return results
+
+
+@PIPELINES.register_module()
+class LoadCarlaPointsFromFile(object):
+    """Load CARLA-simulator LiDAR point clouds from an ``.npz`` block.
+
+    Ported from the Pointcept ``CarlaSegDataset``. Each ``.npz`` block stores a
+    ``features`` array of shape ``(N, 6)`` (xyz + rgb) and a ``labels`` array.
+    Here we only build the LiDAR point cloud: xyz coordinates plus a scalar
+    "strength" derived from the RGB channels (ITU-R BT.709 luma), matching the
+    original ``strength = rgb @ [0.2126, 0.7152, 0.0722]`` formula.
+
+    Args:
+        coord_type (str): Coordinate frame of the points. One of
+            ``'LIDAR'``, ``'DEPTH'``, ``'CAMERA'``. Defaults to ``'LIDAR'``.
+        load_dim (int): Number of columns produced before selection
+            (``x, y, z, strength``). Defaults to 4.
+        use_dim (int | list[int]): Which of those columns to keep. Defaults to
+            4 (all of them).
+        z_max (float | None): Drop points with ``z`` greater than this value
+            (mirrors the Pointcept ``z <= 15.0`` filter). Set to ``None`` to
+            disable. Defaults to 15.0.
+    """
+
+    def __init__(self,
+                 coord_type='LIDAR',
+                 load_dim=4,
+                 use_dim=4,
+                 z_max=15.0):
+        if isinstance(use_dim, int):
+            use_dim = list(range(use_dim))
+        assert max(use_dim) < load_dim, \
+            f'Expect all used dimensions < {load_dim}, got {use_dim}'
+        assert coord_type in ['CAMERA', 'LIDAR', 'DEPTH']
+        self.coord_type = coord_type
+        self.load_dim = load_dim
+        self.use_dim = use_dim
+        self.z_max = z_max
+        # ITU-R BT.709 luma weights, as in the original Pointcept dataset.
+        self._rgb2strength = np.array([0.2126, 0.7152, 0.0722],
+                                      dtype=np.float32)
+
+    def _load_points(self, pts_filename):
+        mmcv.check_file_exist(pts_filename)
+        block = np.load(pts_filename)
+        features = block['features']
+        coord = features[:, 0:3].astype(np.float32)
+        strength = (features[:, 3:6].astype(np.float32)
+                    @ self._rgb2strength).reshape([-1, 1])
+        points = np.concatenate([coord, strength], axis=1)
+        if self.z_max is not None:
+            points = points[points[:, 2] <= self.z_max]
+        return points
+
+    def __call__(self, results):
+        pts_filename = results['pts_filename']
+        points = self._load_points(pts_filename)
+        points = points[:, self.use_dim]
+
+        points_class = get_points_type(self.coord_type)
+        points = points_class(
+            points, points_dim=points.shape[-1], attribute_dims=None)
+        results['points'] = points
+        return results
+
+    def __repr__(self):
+        return (f'{self.__class__.__name__}('
+                f'coord_type={self.coord_type}, '
+                f'load_dim={self.load_dim}, use_dim={self.use_dim}, '
+                f'z_max={self.z_max})')
