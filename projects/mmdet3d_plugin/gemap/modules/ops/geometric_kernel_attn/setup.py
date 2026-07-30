@@ -23,7 +23,8 @@ def get_extensions():
 
     sources = main_file
     extension = CppExtension
-    extra_compile_args = {"cxx": []}
+    # ATen headers require C++17 as of the newer torch this image now targets.
+    extra_compile_args = {"cxx": ["-std=c++17"]}
     define_macros = []
 
     if (torch.cuda.is_available() or os.getenv("FORCE_CUDA", "0") == "1") and CUDA_HOME is not None:
@@ -35,6 +36,7 @@ def get_extensions():
             "-D__CUDA_NO_HALF_OPERATORS__",
             "-D__CUDA_NO_HALF_CONVERSIONS__",
             "-D__CUDA_NO_HALF2_OPERATORS__",
+            "-std=c++17",
         ]
     else:
         raise NotImplementedError('Cuda is not availabel')
