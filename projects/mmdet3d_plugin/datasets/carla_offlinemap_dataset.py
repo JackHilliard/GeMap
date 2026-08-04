@@ -38,6 +38,7 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
                  data_root,
                  ann_file,
                  pipeline=None,
+                 raw_data_root=None,
                  map_ann_file=None,
                  bev_size=(200, 200),
                  pc_range=[-12.5, -12.5, -2.0, 12.5, 12.5, 24.0],
@@ -64,6 +65,13 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
         # vectormap_pipeline() (indirectly, via prepare_train_data) rely on
         # them and the base __init__ calls load_annotations() itself.
         self.map_ann_file = map_ann_file
+        # Separate from data_root: data_root is where the pkl/GT json this
+        # dataset reads/writes live (e.g. "data/carla/"), while the raw
+        # tiles (.npz blocks) that tools/gemap/custom_carla_map_converter.py
+        # was pointed at with --data-root can be a different directory
+        # entirely. Defaults to data_root for the common case where they
+        # coincide.
+        self.raw_data_root = raw_data_root if raw_data_root is not None else data_root
         self.code_size = code_size
         self.bev_size = bev_size
         self.MAPCLASSES = self.get_map_classes(map_classes)
@@ -116,8 +124,12 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
 
     def get_data_info(self, index):
         info = self.data_infos[index]
+        # lidar_path is stored relative to raw_data_root (see
+        # tools/gemap/custom_carla_map_converter.py's --data-root) so the
+        # pkl stays valid across containers/mounts instead of baking in an
+        # absolute path from wherever conversion happened to run.
         return dict(
-            pts_filename=info['lidar_path'],
+            pts_filename=os.path.join(self.raw_data_root, info['lidar_path']),
             sample_idx=info['sample_idx'],
             timestamp=info.get('timestamp', index),
             # Static tiles have no ego motion / temporal chain; these are

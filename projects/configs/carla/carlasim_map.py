@@ -6,11 +6,11 @@ _base_ = [
 #
 # Map-annotated counterpart to carlasim_lidar.py: wires up
 # `CustomCarlaLocalMapDataset` against the pkl produced by
-# tools/maptrv2/custom_carla_map_converter.py, instead of `CarlaSegDataset`'s
+# tools/gemap/custom_carla_map_converter.py, instead of `CarlaSegDataset`'s
 # raw (GT-free) directory scan.
 #
 # Generate the pkl first:
-#   python tools/maptrv2/custom_carla_map_converter.py \
+#   python tools/gemap/custom_carla_map_converter.py \
 #       --data-root /path/to/carla --out-dir data/carla/ --split test
 #
 plugin = True
@@ -18,6 +18,15 @@ plugin_dir = 'projects/mmdet3d_plugin/'
 
 dataset_type = 'CustomCarlaLocalMapDataset'
 data_root = 'data/carla/'
+# Where the raw CARLA tiles (.npz blocks) live -- i.e. whatever --data-root
+# was passed to the converter above. Kept separate from data_root (which is
+# just where the pkl/GT json this dataset reads/writes live) because
+# lidar_path in the pkl is stored relative to it: baking an absolute path in
+# at conversion time breaks the moment the pkl is read from a different
+# container/mount than the one conversion ran in. Local dev/test path (see
+# carlasim_lidar.py's data_root); override for the cluster to wherever
+# --data-root pointed at when the pkl was (re)generated there.
+raw_data_root = '/home-local/johil9.nobkp/Documents/Code/carla/'
 
 # Only a `test` split subset is available locally; reused for train/val/test
 # purely to exercise the pipeline (see maptrv2_carla_r50_24ep_lidar.py for
@@ -100,6 +109,7 @@ data = dict(
     train=dict(
         type=dataset_type,
         data_root=data_root,
+        raw_data_root=raw_data_root,
         ann_file=ann_file_train,
         pipeline=train_pipeline,
         # `classes` here is Custom3DDataset's generic per-object class list
@@ -115,6 +125,7 @@ data = dict(
     val=dict(
         type=dataset_type,
         data_root=data_root,
+        raw_data_root=raw_data_root,
         ann_file=ann_file_val,
         map_ann_file=map_ann_file,
         pipeline=test_pipeline,
@@ -127,6 +138,7 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
+        raw_data_root=raw_data_root,
         ann_file=ann_file_test,
         map_ann_file=map_ann_file,
         pipeline=test_pipeline,
