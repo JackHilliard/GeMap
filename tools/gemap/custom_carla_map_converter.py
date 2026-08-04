@@ -15,10 +15,17 @@ Expected input layout (see projects/mmdet3d_plugin/datasets/carla_utils.py)::
     <data_root>/<split>/blocks/<tile_name>.npz
     <data_root>/<split>/reference_lines/<tile_name>_reference_lines.json
 
-Usage::
+Usage, from the GeMap root::
 
-    python tools/maptrv2/custom_carla_map_converter.py \\
-        --data-root /path/to/carla --out-dir data/carla/ --split test
+    python tools/gemap/custom_carla_map_converter.py \\
+        --data-root data/carla/ --out-dir data/carla/ --split train
+
+The pkl records each tile's path relative to --data-root, and the dataset
+rejoins it against `raw_data_root` from the config (which defaults to
+`data/carla/`, repo-relative). Keeping --data-root repo-relative and equal
+to that default is what makes the resulting pkl portable across machines and
+containers -- passing an absolute --data-root here still works, but then
+raw_data_root must be overridden to match wherever that was.
 """
 
 import argparse

@@ -18,15 +18,20 @@ plugin_dir = 'projects/mmdet3d_plugin/'
 
 dataset_type = 'CustomCarlaLocalMapDataset'
 data_root = 'data/carla/'
-# Where the raw CARLA tiles (.npz blocks) live -- i.e. whatever --data-root
-# was passed to the converter above. Kept separate from data_root (which is
-# just where the pkl/GT json this dataset reads/writes live) because
-# lidar_path in the pkl is stored relative to it: baking an absolute path in
-# at conversion time breaks the moment the pkl is read from a different
-# container/mount than the one conversion ran in. Local dev/test path (see
-# carlasim_lidar.py's data_root); override for the cluster to wherever
-# --data-root pointed at when the pkl was (re)generated there.
-raw_data_root = '/home-local/johil9.nobkp/Documents/Code/carla/'
+# Where the raw CARLA tiles (.npz blocks) live, i.e. the directory holding
+# the <split>/{manifest.json,blocks,reference_lines} trees. lidar_path in the
+# pkl is stored relative to this (rather than absolute, which would bake in
+# whatever mount the conversion happened to run under), so this is the only
+# place that needs to know where the tiles actually are.
+#
+# Repo-relative on purpose, like data_root above and every other mmdet3d
+# dataset config: it resolves against the CWD, which is the GeMap root for
+# any normal `python tools/train.py ...` / dist_train.sh invocation. That
+# makes it work unchanged on a cluster, where an absolute local dev path
+# would not exist. Point the raw dataset at <GeMap>/data/carla/ (bind mount
+# or symlink) and nothing here needs editing per environment; set this to an
+# absolute path only if the tiles must live somewhere else entirely.
+raw_data_root = data_root
 
 # Only a `test` split subset is available locally; reused for train/val/test
 # purely to exercise the pipeline (see maptrv2_carla_r50_24ep_lidar.py for

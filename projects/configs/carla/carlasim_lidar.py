@@ -25,10 +25,12 @@ plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
 
 dataset_type = 'CarlaSegDataset'
-# Local dev/test path (only a `test` split subset exists here so far).
-# For the full remote-cluster dataset, point this at `data/carla/` (with
-# `train`/`val` split subdirectories, each with its own manifest.json) instead.
-data_root = '/home-local/johil9.nobkp/Documents/Code/carla/'
+# Repo-relative, so it resolves against the CWD (the GeMap root for any
+# normal tools/ invocation) and works unchanged on a cluster. Expects the
+# raw tile dataset at <GeMap>/data/carla/, with `train`/`test` split
+# subdirectories each holding their own manifest.json -- bind mount or
+# symlink it there rather than editing this path per environment.
+data_root = 'data/carla/'
 
 # LiDAR points are [x, y, z, strength]; the z<=15.0 filter matches the source
 # Pointcept dataset.
