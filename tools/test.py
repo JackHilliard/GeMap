@@ -92,7 +92,9 @@ def parse_args():
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
         help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)
+    # torch.distributed.launch/torchrun inject --local-rank (hyphen) as of
+    # newer torch, but older ones use --local_rank (underscore); accept both.
+    parser.add_argument('--local-rank', '--local_rank', dest='local_rank', type=int, default=0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -222,9 +224,17 @@ def main():
         model.PALETTE = dataset.PALETTE
 
     if not distributed:
-        assert False
-        # model = MMDataParallel(model, device_ids=[0])
-        # outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+        # Upstream disabled this path with a bare `assert False` (the two
+        # lines below were left commented out), so tools/test.py could only
+        # run under a distributed launcher. Re-enabled because the
+        # single-GPU path is the one that actually works in this
+        # environment: mmcv 1.7.2's MMDistributedDataParallel is
+        # incompatible with torch 2.1's DDP (`AttributeError:
+        # 'MMDistributedDataParallel' object has no attribute
+        # '_use_replicated_tensor_module'`), while MMDataParallel's own
+        # torch-2.x incompatibility is already patched in the Dockerfile.
+        model = MMDataParallel(model, device_ids=[0])
+        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
@@ -240,8 +250,16 @@ def main():
             assert False
             #mmcv.dump(outputs['bbox_results'], args.out)
         kwargs = {} if args.eval_options is None else args.eval_options
-        kwargs['jsonfile_prefix'] = osp.join('test', args.config.split(
-            '/')[-1].split('.')[-2], time.ctime().replace(' ', '_').replace(':', '_'))
+        # setdefault, not assignment: this used to clobber an explicit
+        # `--eval-options jsonfile_prefix=...`, so results always went to
+        # this default `test/<config>/<ctime>/` path no matter what was
+        # asked for. That path is relative to the CWD, which in a container
+        # run is typically not bind-mounted -- meaning the results were
+        # silently discarded on exit. Pass jsonfile_prefix explicitly to put
+        # them somewhere persistent (e.g. inside your work_dir).
+        kwargs.setdefault('jsonfile_prefix', osp.join(
+            'test', args.config.split('/')[-1].split('.')[-2],
+            time.ctime().replace(' ', '_').replace(':', '_')))
         if args.format_only:
             dataset.format_results(outputs, **kwargs)
         

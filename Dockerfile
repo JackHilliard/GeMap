@@ -104,6 +104,13 @@ RUN pip install --no-cache-dir -r requirement.txt
 # use (removed in numpy 1.24).
 RUN pip install --no-cache-dir "numpy==1.23.5"
 
+# tools/gemap/dataset_viewer.py is designed to run outside the container
+# (it imports no torch/mmdet3d and needs no GPU), but this lets it also run
+# from inside, which is usually more convenient since the CARLA data is
+# already mounted there. matplotlib/numpy are present transitively; only
+# flask is actually missing.
+RUN pip install --no-cache-dir flask
+
 # mmcv-full/mmdet/nuscenes-devkit/av2 all transitively pull in non-headless
 # opencv-python, which links its GUI backend against libGL.so.1. Swap to the
 # headless build -- same OpenCV, no GL/X11 linkage at all -- so cv2 never
