@@ -258,9 +258,38 @@ model = dict(
 
 file_client_args = dict(backend='disk')
 
-# Matches carlasim_map.py's own test_pipeline (inherited at the data.test
-# dict level via _base_ already); redefined here as a bare name only because
-# `evaluation` below needs it directly, and _base_ variables aren't visible
+# GridSamplePoints must live here (not in carlasim_map.py's base
+# train_pipeline/test_pipeline) because it needs lidar_point_cloud_range,
+# which only exists in this derived config -- mmcv's per-file config
+# isolation means the base file can't see it. Collapses each tile's raw
+# LiDAR points to ~1 representative point per occupied
+# (lidar_voxel_size)-sized cell before the (slow, and at extreme point
+# counts, silently incorrect) LiDAR voxelizer ever sees them. grid_size
+# matches lidar_voxel_size exactly so this adds no spatial precision loss
+# beyond what the voxelizer already imposes.
+train_pipeline = [
+    dict(
+        type='LoadCarlaPointsFromFile',
+        coord_type='LIDAR',
+        load_dim=4,
+        use_dim=4,
+        z_max=96.0),
+    dict(
+        type='GridSamplePoints',
+        grid_size=lidar_voxel_size,
+        point_cloud_range=lidar_point_cloud_range),
+    dict(
+        type='DefaultFormatBundle3D',
+        with_gt=False,
+        with_label=False,
+        class_names=map_classes),
+    dict(type='CustomCollect3D', keys=['points'])
+]
+
+# Matches carlasim_map.py's own test_pipeline shape (inherited at the
+# data.test dict level via _base_), plus the same GridSamplePoints step as
+# train_pipeline above; redefined here as a bare name partly because
+# `evaluation` below needs it directly and _base_ variables aren't visible
 # as plain Python names in this file's own execution scope.
 test_pipeline = [
     dict(
@@ -271,6 +300,10 @@ test_pipeline = [
         # Kept in sync with carlasim_map.py's own z_max and this file's
         # lidar_point_cloud_range z upper bound -- see the comments there.
         z_max=96.0),
+    dict(
+        type='GridSamplePoints',
+        grid_size=lidar_voxel_size,
+        point_cloud_range=lidar_point_cloud_range),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1, 1),
@@ -290,6 +323,7 @@ test_pipeline = [
 # concerns, matching the nuScenes/AV2 convention of overriding them here).
 data = dict(
     train=dict(
+        pipeline=train_pipeline,
         fixed_ptsnum_per_line=fixed_ptsnum_per_gt_line,
         eval_use_same_gt_sample_num_flag=eval_use_same_gt_sample_num_flag,
         bev_size=(bev_h_, bev_w_),
@@ -298,10 +332,12 @@ data = dict(
         # train -- bev_seg is a training-time auxiliary loss).
         aux_seg=aux_seg_cfg),
     val=dict(
+        pipeline=test_pipeline,
         fixed_ptsnum_per_line=fixed_ptsnum_per_gt_line,
         eval_use_same_gt_sample_num_flag=eval_use_same_gt_sample_num_flag,
         bev_size=(bev_h_, bev_w_)),
     test=dict(
+        pipeline=test_pipeline,
         fixed_ptsnum_per_line=fixed_ptsnum_per_gt_line,
         eval_use_same_gt_sample_num_flag=eval_use_same_gt_sample_num_flag,
         bev_size=(bev_h_, bev_w_)),
