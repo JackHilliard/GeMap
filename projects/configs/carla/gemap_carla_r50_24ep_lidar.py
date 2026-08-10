@@ -14,15 +14,29 @@ _base_ = [
 plugin = True
 plugin_dir = 'projects/mmdet3d_plugin/'
 
-# Matches the real 25m x 25m square CARLA tile (tile_radius=12.5). z-range
-# is generous: divider polylines are XY-only for code_size=2 (z gets
-# clamped but never reaches the final regression target), and this just
-# needs to comfortably contain the LiDAR point cloud's z spread.
-point_cloud_range = [-12.5, -12.5, -30.0, 12.5, 12.5, 20.0]
+# THE tile-size knob -- half a tile's side in metres, matching the export
+# being trained on (12.5 for the 25m tiles, 30.0 for the 60m grid export).
+# Every geometric value below is derived from it.
+#
+# Duplicated from carlasim_map.py rather than inherited: mmcv's per-file
+# config isolation means a _base_ variable is not visible as a plain Python
+# name in this file's execution scope, and these derivations need it as a
+# number. Keep the two in sync -- CustomCarlaLocalMapDataset asserts the
+# base config's copy against the pkl, which catches a drifted pair here as
+# soon as the data loads.
+tile_radius = 12.5
+
+# z-range is generous: divider polylines are XY-only for code_size=2 (z
+# gets clamped but never reaches the final regression target), and this
+# just needs to comfortably contain the LiDAR point cloud's z spread.
+point_cloud_range = [
+    -tile_radius, -tile_radius, -30.0, tile_radius, tile_radius, 20.0
+]
 voxel_size = [0.15, 0.15, 20.0]
 
 # LiDAR branch geometry (kept separate from the map/coder point_cloud_range
-# above -- same 25m x/y extent). z range was originally [-10, 18] (margin
+# above -- same x/y extent, from the same tile_radius). z range was
+# originally [-10, 18] (margin
 # around the flat local town10hd subset's observed [-7.7, 14.8]), but the
 # full remote train set has 6 confirmed town03 tiles with LiDAR returns
 # spanning z in [-66.90, 90.52] within a single tile (a highway
@@ -37,8 +51,30 @@ voxel_size = [0.15, 0.15, 20.0]
 # gotcha #4); sparse convs only compute over occupied voxels so normal
 # (non-degenerate) tiles shouldn't see a proportional compute/memory hit,
 # but this hasn't been verified against real full-dataset tiles yet.
-lidar_point_cloud_range = [-12.5, -12.5, -72.0, 12.5, 12.5, 96.0]
+lidar_point_cloud_range = [
+    -tile_radius, -tile_radius, -72.0, tile_radius, tile_radius, 96.0
+]
 lidar_voxel_size = [0.1, 0.1, 0.4]
+
+# SparseEncoder's input grid, in (x, y, z) order -- confirmed against the
+# working nuScenes fusion config's sparse_shape=[300,600,41] for a 30x60x8m
+# range at the same voxel resolution.
+#
+# Derived rather than hardcoded, because it is a pure function of the range
+# and voxel size: `round(extent / voxel) + 1`. Checked against both values
+# that were previously measured empirically for this config -- 25/0.1+1 =
+# 251 and 168/0.4+1 = 421 -- so the formula reproduces the measurement
+# exactly on the 25m export and follows tile_radius from there. (The rule
+# in CLAUDE.md about measuring rather than hand-deriving still applies to
+# lidar_bev_proj.in_channels below, which is not a closed form.)
+sparse_shape = [
+    int(round((lidar_point_cloud_range[3] - lidar_point_cloud_range[0]) /
+              lidar_voxel_size[0])) + 1,
+    int(round((lidar_point_cloud_range[4] - lidar_point_cloud_range[1]) /
+              lidar_voxel_size[1])) + 1,
+    int(round((lidar_point_cloud_range[5] - lidar_point_cloud_range[2]) /
+              lidar_voxel_size[2])) + 1,
+]
 
 map_classes = ['divider']
 num_vec=50
@@ -58,13 +94,20 @@ _dim_ = 256
 _pos_dim_ = _dim_//2
 _ffn_dim_ = _dim_*2
 _num_levels_ = 1
-# Square, matching the square 25m x 25m point_cloud_range above (was
-# 200x100, inherited unchanged from the original asymmetric 30m x 60m
+# Square, matching the square point_cloud_range above (was 200x100,
+# inherited unchanged from the original asymmetric 30m x 60m
 # nuScenes-derived range -- that mismatch caused a shape error between the
 # seg head's output and the dataset's gt_seg_mask, which uses bev_size
 # below for its canvas).
-bev_h_ = 100
-bev_w_ = 100
+#
+# Expressed as a BEV cell size so the resolution the model sees stays
+# constant across tile sizes instead of being stretched: 0.25 m/cell gives
+# the 100x100 the 25m export was tuned at, and 240x240 on the 60m one.
+bev_resolution = 0.25  # metres per BEV cell
+bev_h_ = int(round((point_cloud_range[4] - point_cloud_range[1]) /
+                   bev_resolution))
+bev_w_ = int(round((point_cloud_range[3] - point_cloud_range[0]) /
+                   bev_resolution))
 queue_length = 1 # each sequence contains `queue_length` frames.
 
 aux_seg_cfg = dict(
@@ -90,13 +133,7 @@ model = dict(
         backbone=dict(
             type='SparseEncoder',
             in_channels=4,  # CARLA points are xyz + strength (not nuScenes' xyz+intensity+ring=5)
-            # (x, y, z) order -- confirmed against the working nuScenes
-            # fusion config's sparse_shape=[300,600,41] for a 30x60x8m
-            # range at the same voxel resolution. z re-measured for the
-            # widened lidar_point_cloud_range above via a dummy
-            # extract_lidar_feat() call (was [251,251,71] for the old
-            # [-10,18] z range).
-            sparse_shape=[251, 251, 421],
+            sparse_shape=sparse_shape,
             output_channels=128,
             order=('conv', 'norm', 'act'),
             encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128,
@@ -144,6 +181,15 @@ model = dict(
             # (see that config's comment) -- the much larger input z-range
             # downsamples proportionally less, not just linearly, so this
             # was re-measured rather than scaled by hand.
+            #
+            # Deliberately NOT derived from tile_radius, unlike everything
+            # else geometric in this file: it is a channel count, so it
+            # depends only on the z extent, and the lidar BEV map is
+            # bicubic-resized to (bev_h_, bev_w_) in
+            # MapTRPerceptionTransformer.get_bev_features before this
+            # projection sees it -- so the x/y grid growing with tile size
+            # never reaches it. Re-measure only if the z range or
+            # lidar_voxel_size[2] changes.
             lidar_bev_proj=dict(
                 type='ConvFuser',
                 in_channels=[3200],
@@ -213,7 +259,14 @@ model = dict(
                                      'ffn', 'norm')))),
         bbox_coder=dict(
             type='GeMapNMSFreeCoder',
-            post_center_range=[-14.5, -14.5, -14.5, -14.5, 14.5, 14.5, 14.5, 14.5],
+            # Decode-time cull on predicted box corners, as
+            # [x_min, y_min, x_max, y_max] repeated for both corners. Must
+            # stay *wider* than the patch or predictions near the tile edge
+            # are silently dropped -- hence tile_radius plus a margin
+            # (12.5 + 2 = the 14.5 this was fixed at before it followed
+            # tile size).
+            post_center_range=[-(tile_radius + 2.0)] * 4 +
+            [tile_radius + 2.0] * 4,
             pc_range=point_cloud_range,
             max_num=50,
             voxel_size=voxel_size,

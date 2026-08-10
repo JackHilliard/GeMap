@@ -43,10 +43,25 @@ ann_file_val = data_root + 'carla_map_infos_test.pkl'
 ann_file_test = data_root + 'carla_map_infos_test.pkl'
 map_ann_file = data_root + 'carla_map_gt.json'
 
-# Matches the real 25m x 25m square CARLA tile (tile_radius=12.5); z-range
-# is generous since map GT (divider polylines) is XY-only for code_size=2
-# and this bound only needs to comfortably contain the LiDAR point cloud.
-point_cloud_range = [-12.5, -12.5, -2.0, 12.5, 12.5, 24.0]
+# THE tile-size knob. Half a tile's side, in metres, matching the export
+# being trained on -- 12.5 for the 25m tiles, 30.0 for the 60m grid export.
+# Everything geometric below is derived from it, so switching exports is a
+# one-line change; the converter prints the right value, and
+# CustomCarlaLocalMapDataset asserts this against the pkl's own
+# `tile_geometry` at load time rather than letting a mismatch quietly crop
+# the tile for a whole run.
+#
+# Exact because annotations are tile-centred (see the converter's module
+# docstring): the tile occupies precisely [-tile_radius, +tile_radius] on
+# both axes, so the patch is the tile with nothing cropped or wasted.
+tile_radius = 12.5
+
+# z-range is generous since map GT (divider polylines) is XY-only for
+# code_size=2 and this bound only needs to comfortably contain the LiDAR
+# point cloud.
+point_cloud_range = [
+    -tile_radius, -tile_radius, -2.0, tile_radius, tile_radius, 24.0
+]
 map_classes = ['divider']
 
 # LiDAR points are [x, y, z, strength].

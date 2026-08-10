@@ -469,6 +469,18 @@ class LoadCarlaPointsFromFile(object):
     "strength" derived from the RGB channels (ITU-R BT.709 luma), matching the
     original ``strength = rgb @ [0.2126, 0.7152, 0.0722]`` formula.
 
+    ``features[:, 0:3]`` is stored relative to the block's own ``offset``,
+    which is *not* the tile centre. When the info dict carries a
+    ``recenter_shift`` (written by
+    ``tools/gemap/custom_carla_map_converter.py``, and equal to
+    ``tile_center - offset``) it is subtracted here, putting the cloud in the
+    same tile-centred frame as the GT polylines -- both are translated by the
+    same vector, so their relative alignment is untouched, but the tile then
+    sits squarely inside ``+/-tile_radius`` instead of being displaced from
+    the model's origin-centred patch by up to 12m (25m export) or ~17m (60m
+    export). Pkls predating that change carry no such key and load unshifted,
+    exactly as before.
+
     Args:
         coord_type (str): Coordinate frame of the points. One of
             ``'LIDAR'``, ``'DEPTH'``, ``'CAMERA'``. Defaults to ``'LIDAR'``.
@@ -499,11 +511,18 @@ class LoadCarlaPointsFromFile(object):
         self._rgb2strength = np.array([0.2126, 0.7152, 0.0722],
                                       dtype=np.float32)
 
-    def _load_points(self, pts_filename):
+    def _load_points(self, pts_filename, recenter_shift=None):
         mmcv.check_file_exist(pts_filename)
         block = np.load(pts_filename)
         features = block['features']
         coord = features[:, 0:3].astype(np.float32)
+        if recenter_shift is not None:
+            # Before the z filter, so z_max is applied to final-frame
+            # values. The z component of the shift is small (<=0.17m on the
+            # 25m export) but is applied all the same: shifting only xy
+            # would break the polylines' z alignment, since the converter
+            # subtracts the full 3-vector from those.
+            coord = coord - np.asarray(recenter_shift, dtype=np.float32)
         strength = (features[:, 3:6].astype(np.float32)
                     @ self._rgb2strength).reshape([-1, 1])
         points = np.concatenate([coord, strength], axis=1)
@@ -513,7 +532,8 @@ class LoadCarlaPointsFromFile(object):
 
     def __call__(self, results):
         pts_filename = results['pts_filename']
-        points = self._load_points(pts_filename)
+        points = self._load_points(pts_filename,
+                                   results.get('recenter_shift'))
         points = points[:, self.use_dim]
 
         points_class = get_points_type(self.coord_type)

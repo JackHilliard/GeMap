@@ -17,27 +17,36 @@ Then open http://127.0.0.1:5001
 Each tile's .npz stores two different origins, and they are NOT the same:
   * `offset`      -- what `features[:, 0:3]` is actually relative to
                      (verified: points - offset == features xyz, exactly)
-  * `tile_center` -- the nominal geometric centre of the tile
-The reference_lines/*.json polylines are in world coordinates and must have
-one of these subtracted to land in the same frame as the points.
+  * `tile_center` -- the geometric centre of the tile (verified: exactly
+                     the midpoint of `tile_bounds`, on every tile)
+The reference_lines/*.json polylines are in world coordinates, so something
+must be subtracted from them to land in the same frame as the points.
 
-`tile_center` and `offset` differ by a mean of ~2.4m (max >7m) across the
-train split, so the choice matters a lot. Measured against the actual
-driving-surface returns (points whose label == 0), across 40 tiles:
+This viewer renders everything in the **tile-centred** frame, matching what
+the model trains on: polylines get `tile_center` subtracted, and the point
+cloud -- which arrives in the `offset` frame -- gets the difference
+`tile_center - offset` subtracted. Both are translated by the same vector,
+so their relative alignment is exactly the alignment that was measured
+against real driving-surface returns (points whose label == 0), across 40
+tiles:
     polyline - offset       -> median 0.038 m to nearest road point
     polyline - tile_center  -> median 0.388 m to nearest road point
-So `offset` is the correct frame, and this viewer always uses it. There is
-deliberately no way to render the `tile_center` variant -- it is simply
-wrong, and having it selectable only invited misreading a misaligned plot
-as real.
+i.e. the 0.038 m figure, *not* the 0.388 m one. That second number is what
+you get from re-framing the polylines alone and leaving the points where
+they were; shifting both is a rigid translation and preserves the first.
 
-NOTE: this viewer derives GT itself from reference_lines/*.json, so what it
-draws is correct regardless of what the training pkl contains. The pkl is a
-separate matter: tools/gemap/custom_carla_map_converter.py still builds it
-with `pts - tile_center`, i.e. the wrong frame described above, so the GT
-the model actually trains and evals against is displaced by ~2.4 m relative
-to what you see here. Fixing that means changing the converter, regenerating
-both pkls, deleting the cached data/carla/carla_map_gt.json, and retraining.
+What the tile-centred frame buys is that the tile now occupies exactly
+[-tile_radius, +tile_radius] on both axes, so these plots' axes bound the
+data instead of cropping it. In the raw `offset` frame the tile is
+displaced from the origin by a mean of 1.25 m and up to 12.07 m on the 25 m
+export (and ~17 m on the 60 m one), which used to push part of every tile
+outside the axis limits.
+
+tools/gemap/custom_carla_map_converter.py builds the training pkl in this
+same frame, so what you see here is what the model trains and evals
+against. (Pkls generated before 2026-08-10 are in the old `offset` frame
+and no longer load -- the dataset rejects them rather than training against
+a misaligned patch.)
 """
 import argparse
 import html
@@ -152,8 +161,8 @@ def load_block(name, split):
 
 
 def load_polylines(name, origin, split):
-    """Returns list of (N,2) arrays in the same frame as the block's
-    `features` xyz, given the origin to subtract (see module docstring)."""
+    """Returns list of (N,2) arrays in the tile-centred frame, given the
+    origin to subtract (see module docstring)."""
     path = osp.join(split_dir(split), 'reference_lines',
                      f'{name}_reference_lines.json')
     if not osp.isfile(path):
@@ -205,8 +214,8 @@ def load_results(path):
     """Parse a carlamap_results.json into {sample_token: [(pts, score, cls)]}.
 
     Predicted points are already in the model's tile-local BEV frame (the
-    same frame as the LiDAR points fed in, i.e. the block's `offset`
-    frame), so unlike the GT reference lines they need no origin
+    same frame as the LiDAR points fed in, i.e. the tile-centred frame this
+    viewer draws in), so unlike the GT reference lines they need no origin
     subtraction -- they're plotted as-is.
     """
     cached = STATE['results_cache'].get(path)
@@ -260,12 +269,15 @@ def _render_tile(name, mode, show_polylines,
     labels = block['labels'] if 'labels' in block else None
     radius = float(block['tile_radius']) if 'tile_radius' in block else 12.5
 
-    # Always the block's own `offset` -- the frame `features[:, 0:3]` is
-    # stored in. `tile_center` is NOT interchangeable: it differs by a mean
-    # of ~2.4m. Note the training pkl is still built in the tile_center
-    # frame (see this file's module docstring), so GT drawn here will not
-    # match what the model was trained against until the converter is fixed.
-    origin = block['offset']
+    # The tile-centred frame, matching the converter and the model (see
+    # this file's module docstring). `origin` is subtracted from the
+    # world-frame polylines; the point cloud is already in the `offset`
+    # frame, so it gets the difference instead.
+    origin = block['tile_center'] if 'tile_center' in block \
+        else block['offset']
+    recenter_shift = np.asarray(origin, dtype=np.float32) \
+        - np.asarray(block['offset'], dtype=np.float32)
+    xy = xy - recenter_shift[:2]
 
     fig = Figure(figsize=(6, 6))
     FigureCanvasAgg(fig)
