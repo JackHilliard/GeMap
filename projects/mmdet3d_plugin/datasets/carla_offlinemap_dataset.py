@@ -1,13 +1,18 @@
 """CARLA road-polyline tile dataset with vectorized map ground truth.
 
-Each sample is one static 25m x 25m LiDAR tile produced by
-tools/maptrv2/custom_carla_map_converter.py -- unlike the nuScenes/AV2
+Each sample is one static square LiDAR tile produced by
+tools/gemap/custom_carla_map_converter.py -- unlike the nuScenes/AV2
 offline map datasets there is no ego trajectory/temporal queue or camera
 imagery to handle, so this subclasses ``Custom3DDataset`` directly (like
 ``CarlaSegDataset``) rather than ``CustomNuScenesDataset``. The vectorization
 machinery (``VectorizedAV2LocalMap``/``LiDARInstanceLines``) and a couple of
 small free functions are reused unmodified from the AV2 dataset module --
 they have no AV2-SDK dependency in their bodies.
+
+Tile size is not baked in anywhere: annotations are tile-centred, so the
+patch is exactly ``[-tile_radius, +tile_radius]`` on both axes, and
+``load_annotations`` asserts the configured ``pc_range`` says the same as
+the pkl's own ``tile_geometry``.
 """
 
 import json
@@ -109,7 +114,44 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
 
     def load_annotations(self, ann_file):
         data = mmcv.load(ann_file, file_format='pkl')
+        self.annotation_frame = data.get('annotation_frame')
+        self.tile_geometry = data.get('tile_geometry') or {}
+        self._check_tile_geometry(ann_file)
         return sorted(data['samples'], key=lambda e: e['sample_idx'])
+
+    def _check_tile_geometry(self, ann_file):
+        """Fail fast when the pkl's tile geometry and the config disagree.
+
+        Both failure modes below are silent at runtime -- training simply
+        proceeds against a patch that does not cover the tile -- and both
+        cost a full run to discover, so they are worth an assert.
+        """
+        if self.annotation_frame is None:
+            # Pre-2026-08-10 pkl: annotations are relative to the block
+            # `offset` rather than the tile centre, so the tile is displaced
+            # from this origin-centred patch by up to 12m (25m export). On
+            # the 25m train split that put 16% of GT points and 82% of
+            # divider instances outside pc_range.
+            raise ValueError(
+                f'{ann_file} predates the tile-centred annotation frame '
+                '(no `annotation_frame` key) and its GT does not line up '
+                'with pc_range. Regenerate it with '
+                'tools/gemap/custom_carla_map_converter.py.')
+        assert self.annotation_frame == 'tile_center', \
+            f'{ann_file}: unknown annotation_frame {self.annotation_frame!r}'
+
+        tile_radius = self.tile_geometry.get('tile_radius')
+        if tile_radius is None:
+            # Only reachable for an export that states its geometry nowhere;
+            # the converter warns at conversion time too.
+            return
+        for axis, extent in (('x', self.pc_range[3] - self.pc_range[0]),
+                             ('y', self.pc_range[4] - self.pc_range[1])):
+            assert abs(extent - 2 * tile_radius) < 1e-3, (
+                f'{ann_file} holds {2 * tile_radius}m tiles but pc_range '
+                f'spans {extent}m in {axis}. A narrower range crops the '
+                'tile, a wider one wastes BEV cells -- set the config\'s '
+                f'tile_radius to {tile_radius}.')
 
     @classmethod
     def get_map_classes(cls, map_classes=None):
@@ -132,6 +174,10 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
             pts_filename=os.path.join(self.raw_data_root, info['lidar_path']),
             sample_idx=info['sample_idx'],
             timestamp=info.get('timestamp', index),
+            # `tile_center - offset`; LoadCarlaPointsFromFile subtracts it
+            # so the point cloud lands in the same tile-centred frame as
+            # `annotation` below. See that transform's docstring.
+            recenter_shift=info['recenter_shift'],
             # Static tiles have no ego motion / temporal chain; these are
             # placeholders so unconditional img_metas reads elsewhere in the
             # detector don't KeyError (video_test_mode=False makes them
