@@ -272,6 +272,51 @@ def tile_footprint(tile, ref, tile_radius):
     return center - radius, center + radius
 
 
+def tile_origin(tile, offset):
+    """The 3-vector subtracted from this tile's world-frame polylines.
+
+    xy is the tile centre -- taken from `center` when the export states
+    one, else the midpoint of `bounds` (which is exactly the centre; the
+    two agree to 0.0 on every tile of the 25m export).
+
+    z is the awkward part, because not every export gives its tile centres
+    a z: some write `center` as ``[x, y]``. Where one is stated it is used;
+    where it is not, z falls back to the block's own ``offset``, which
+    makes the z component of ``recenter_shift`` exactly zero. That is the
+    only choice that keeps the polylines and the point cloud in *one*
+    frame: the cloud's z is left untouched, so shifting the polylines' z by
+    anything at all would pull the two apart. Since the shift is rigid and
+    identical for both, alignment is preserved either way; z simply stays
+    in the offset frame for a 2D manifest. Nothing downstream minds --
+    ``code_size=2`` means z never reaches a regression target.
+    """
+    center = tile.get('center')
+    if center is None:
+        bounds = tile.get('bounds')
+        if bounds is None:
+            raise ValueError(
+                f'tile {tile.get("name")!r} states neither `center` nor '
+                '`bounds`, so its centre cannot be determined')
+        bounds = np.asarray(bounds, dtype=np.float64)
+        if bounds.size == 4:  # [x_min, y_min, x_max, y_max]
+            center = (bounds[:2] + bounds[2:]) / 2.0
+        elif bounds.size == 6:  # [x_min, y_min, z_min, x_max, y_max, z_max]
+            center = (bounds[:3] + bounds[3:]) / 2.0
+        else:
+            raise ValueError(
+                f'tile {tile.get("name")!r}: cannot read a centre from '
+                f'`bounds` of length {bounds.size}')
+
+    center = np.asarray(center, dtype=np.float32).ravel()
+    if center.size == 2:
+        return np.array([center[0], center[1], offset[2]], dtype=np.float32)
+    if center.size == 3:
+        return center.astype(np.float32)
+    raise ValueError(
+        f'tile {tile.get("name")!r}: `center` has {center.size} components, '
+        'expected 2 or 3')
+
+
 def default_pc_range(tile_radius):
     """The range a training config for this tile size would use: square in
     xy, matching the tile, with the config's z span.
@@ -414,7 +459,7 @@ def convert_carla_tiles(data_root,
         # this loop, ~14ms for a 110K-point tile.)
         with np.load(abs_lidar_path) as block:
             offset = np.asarray(block['offset'], dtype=np.float32)
-        origin = np.asarray(tile['center'], dtype=np.float32)
+        origin = tile_origin(tile, offset)
         recenter_shift = origin - offset
 
         n_raw = n_in_range = None
@@ -450,7 +495,11 @@ def convert_carla_tiles(data_root,
             pts = np.array(poly['points'], dtype=np.float32)
             if pts.shape[0] < 2:
                 continue
-            divider.append(pts - origin)
+            # Exports vary in whether polyline vertices carry z, the same
+            # way tile centres do (see tile_origin). Subtract only as many
+            # components as the vertices actually have, rather than
+            # assuming 3 and failing to broadcast.
+            divider.append(pts - origin[:pts.shape[1]])
             total_instances += 1
 
         # Sanity check only (tiles are asserted to already be the patch, so
@@ -479,11 +528,16 @@ def convert_carla_tiles(data_root,
                 token=name,
                 timestamp=idx,
                 town=tile.get('town'),
-                tile_center=tile['center'],
-                # The origin the annotation below is relative to. Equal to
-                # tile_center since the 2026-08-10 re-centring; kept as its
-                # own key because the frame must never be ambiguous when
-                # reading the pkl back.
+                # Exactly what the manifest said, for traceability -- it
+                # may be 2D, or absent on an export that states only
+                # `bounds`. Use annotation_origin below for the frame.
+                tile_center=tile.get('center'),
+                # The origin the annotation below is relative to: always a
+                # resolved 3-vector, tile-centred in xy. Equal to
+                # tile_center when the export states a 3D one; see
+                # tile_origin for what happens when it does not. Kept as
+                # its own key because the frame must never be ambiguous
+                # when reading the pkl back.
                 annotation_origin=origin.tolist(),
                 # What LoadCarlaPointsFromFile subtracts from
                 # features[:, 0:3] to bring the point cloud into that same
