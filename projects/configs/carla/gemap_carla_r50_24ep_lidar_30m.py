@@ -130,6 +130,21 @@ model = dict(
 # Restated in full because they are lists: mmcv replaces a list wholesale
 # rather than merging into it, so there is no way to patch only
 # GridSamplePoints' point_cloud_range from here.
+# --- actor augmentation ---------------------------------------------------
+# Vehicles/pedestrians scanned once from CARLA (point2vector_data/
+# carla_actor_scan.py) and pasted in at load time, together with the ground
+# shadow each one removes. Set actor_catalogue = None to disable. Runs after
+# LoadCarlaPointsFromFile (its tile-centred frame) and before GridSamplePoints,
+# so pasted points get the same voxel decimation as real ones. GT polylines are
+# left untouched on purpose: the model must infer map elements under traffic.
+actor_catalogue = None
+actor_paste = dict(
+    type='CarlaActorPaste',
+    catalogue=actor_catalogue,
+    n_vehicles=(0, 5),
+    n_pedestrians=(0, 6),
+    prob=0.8)
+
 train_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
@@ -148,6 +163,8 @@ train_pipeline = [
         class_names=map_classes),
     dict(type='CustomCollect3D', keys=['points'])
 ]
+if actor_catalogue is not None:
+    train_pipeline.insert(1, actor_paste)
 
 test_pipeline = [
     dict(
