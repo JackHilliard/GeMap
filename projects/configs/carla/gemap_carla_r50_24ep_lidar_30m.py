@@ -166,10 +166,10 @@ train_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
-        # load_dim stays 4: the loader builds the strength column before
-        # selecting, and use_dim=3 keeps only [x, y, z] -- see the
-        # in_channels=3 note on the model above.
-        load_dim=4,
+        # xyz only -- see the in_channels=3 note on the model above. With
+        # load_dim=3 the loader skips building the BT.709 strength column
+        # entirely instead of building and discarding it.
+        load_dim=3,
         use_dim=3,
         z_max=96.0),
     dict(
@@ -190,7 +190,7 @@ test_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
-        load_dim=4,
+        load_dim=3,
         use_dim=3,  # colour-free, matching train_pipeline
         z_max=96.0),
     dict(
