@@ -103,7 +103,14 @@ map_ann_file = data_root + 'carla_map_gt.json'
 model = dict(
     lidar_encoder=dict(
         voxelize=dict(point_cloud_range=lidar_point_cloud_range),
-        backbone=dict(sparse_shape=sparse_shape),
+        # in_channels=3 pairs with use_dim=3 on the loaders below: the colour
+        # ("strength") channel is dropped to match the MapTRv2 30m HM
+        # benchmark convention (its tidy-configs branch trains colour-free).
+        # The two MUST move together -- a 3-channel input against the
+        # parent's 4-channel first conv (or vice versa) fails at the first
+        # sparse conv. sparse_shape and lidar_bev_proj.in_channels do not
+        # move: neither depends on the input channel width.
+        backbone=dict(in_channels=3, sparse_shape=sparse_shape),
     ),
     pts_bbox_head=dict(
         bev_h=bev_h_,
@@ -149,8 +156,11 @@ train_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
+        # load_dim stays 4: the loader builds the strength column before
+        # selecting, and use_dim=3 keeps only [x, y, z] -- see the
+        # in_channels=3 note on the model above.
         load_dim=4,
-        use_dim=4,
+        use_dim=3,
         z_max=96.0),
     dict(
         type='GridSamplePoints',
@@ -171,7 +181,7 @@ test_pipeline = [
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
         load_dim=4,
-        use_dim=4,
+        use_dim=3,  # colour-free, matching train_pipeline
         z_max=96.0),
     dict(
         type='GridSamplePoints',

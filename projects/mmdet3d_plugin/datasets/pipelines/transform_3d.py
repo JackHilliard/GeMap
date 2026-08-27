@@ -529,9 +529,17 @@ class CarlaActorPaste:
 
         # BT.709 luma, matching LoadCarlaPointsFromFile. The tile's own points
         # round-trip exactly (their three channels are already that luma).
+        # Preserve the input width: under a colour-free config (use_dim=3 on
+        # the loader, in_channels=3 on the SparseEncoder) the points arrive
+        # as bare xyz, and emitting the synthesised strength column here
+        # would widen them back to 4 and fail at the first sparse conv.
         w = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
         out_strength = (out_rgb.astype(np.float32) @ w).reshape(-1, 1)
-        new = np.concatenate([out_xyz.astype(np.float32), out_strength], axis=1)
+        if arr.shape[1] > 3:
+            new = np.concatenate(
+                [out_xyz.astype(np.float32), out_strength], axis=1)
+        else:
+            new = out_xyz.astype(np.float32)
         results['points'] = type(points)(
             torch.from_numpy(new), points_dim=new.shape[-1], attribute_dims=None)
         results['pasted_actors'] = meta
