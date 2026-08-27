@@ -78,7 +78,12 @@ eval_use_same_gt_sample_num_flag = True
 # The converter reads tile_radius from that export's manifest and prints
 # it; it must say 15.0 for this config, and the dataset asserts as much.
 data_root = 'data/carla30/'
-raw_data_root = data_root
+# None = resolve LiDAR paths against the data_root recorded inside the
+# annotation pkl (what each lidar_path is relative to), which also lets the
+# MapTRv2 benchmark repo's pkls -- shareable since 2026-08-28 -- load here
+# unchanged. Set explicitly only when the tile export lives at a different
+# path than at conversion time.
+raw_data_root = None
 ann_file_train = data_root + 'carla_map_infos_train.pkl'
 ann_file_val = data_root + 'carla_map_infos_test.pkl'
 ann_file_test = data_root + 'carla_map_infos_test.pkl'
