@@ -53,9 +53,14 @@ sparse_shape = [
               lidar_voxel_size[2])) + 1,
 ]
 
-# Same metres-per-cell as the 25m config, so BEV resolution is held
-# constant rather than stretched: 30m / 0.25 = 120x120 (vs 100x100).
-bev_resolution = 0.25
+# 0.3 m/cell -> 100x100, the shared benchmark resolution (was 0.25 ->
+# 120x120, inherited from the 25m config). 0.3 is doubly GeMap's own
+# number: upstream GeMap trains nuScenes/AV2 at 0.3 m/cell (200x100 over
+# 60x30 m), and the 25m config's 0.25 was only ever chosen to make the
+# 25 m tile divide into the round 100x100 grid -- which at 30 m is what
+# 0.3 gives. It also matches the MapTRv2/PMT/mapdiffusion 30m configs
+# exactly (100x100), so BEV token count stops being a cross-repo confound.
+bev_resolution = 0.3
 bev_h_ = int(round((point_cloud_range[4] - point_cloud_range[1]) /
                    bev_resolution))
 bev_w_ = int(round((point_cloud_range[3] - point_cloud_range[0]) /
