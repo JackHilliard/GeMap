@@ -53,9 +53,14 @@ sparse_shape = [
               lidar_voxel_size[2])) + 1,
 ]
 
-# Same metres-per-cell as the 25m config, so BEV resolution is held
-# constant rather than stretched: 30m / 0.25 = 120x120 (vs 100x100).
-bev_resolution = 0.25
+# 0.3 m/cell -> 100x100, the shared benchmark resolution (was 0.25 ->
+# 120x120, inherited from the 25m config). 0.3 is doubly GeMap's own
+# number: upstream GeMap trains nuScenes/AV2 at 0.3 m/cell (200x100 over
+# 60x30 m), and the 25m config's 0.25 was only ever chosen to make the
+# 25 m tile divide into the round 100x100 grid -- which at 30 m is what
+# 0.3 gives. It also matches the MapTRv2/PMT/mapdiffusion 30m configs
+# exactly (100x100), so BEV token count stops being a cross-repo confound.
+bev_resolution = 0.3
 bev_h_ = int(round((point_cloud_range[4] - point_cloud_range[1]) /
                    bev_resolution))
 bev_w_ = int(round((point_cloud_range[3] - point_cloud_range[0]) /
@@ -78,7 +83,12 @@ eval_use_same_gt_sample_num_flag = True
 # The converter reads tile_radius from that export's manifest and prints
 # it; it must say 15.0 for this config, and the dataset asserts as much.
 data_root = 'data/carla30/'
-raw_data_root = data_root
+# None = resolve LiDAR paths against the data_root recorded inside the
+# annotation pkl (what each lidar_path is relative to), which also lets the
+# MapTRv2 benchmark repo's pkls -- shareable since 2026-08-28 -- load here
+# unchanged. Set explicitly only when the tile export lives at a different
+# path than at conversion time.
+raw_data_root = None
 ann_file_train = data_root + 'carla_map_infos_train.pkl'
 ann_file_val = data_root + 'carla_map_infos_test.pkl'
 ann_file_test = data_root + 'carla_map_infos_test.pkl'
@@ -103,7 +113,14 @@ map_ann_file = data_root + 'carla_map_gt.json'
 model = dict(
     lidar_encoder=dict(
         voxelize=dict(point_cloud_range=lidar_point_cloud_range),
-        backbone=dict(sparse_shape=sparse_shape),
+        # in_channels=3 pairs with use_dim=3 on the loaders below: the colour
+        # ("strength") channel is dropped to match the MapTRv2 30m HM
+        # benchmark convention (its tidy-configs branch trains colour-free).
+        # The two MUST move together -- a 3-channel input against the
+        # parent's 4-channel first conv (or vice versa) fails at the first
+        # sparse conv. sparse_shape and lidar_bev_proj.in_channels do not
+        # move: neither depends on the input channel width.
+        backbone=dict(in_channels=3, sparse_shape=sparse_shape),
     ),
     pts_bbox_head=dict(
         bev_h=bev_h_,
@@ -130,12 +147,30 @@ model = dict(
 # Restated in full because they are lists: mmcv replaces a list wholesale
 # rather than merging into it, so there is no way to patch only
 # GridSamplePoints' point_cloud_range from here.
+# --- actor augmentation ---------------------------------------------------
+# Vehicles/pedestrians scanned once from CARLA (point2vector_data/
+# carla_actor_scan.py) and pasted in at load time, together with the ground
+# shadow each one removes. Set actor_catalogue = None to disable. Runs after
+# LoadCarlaPointsFromFile (its tile-centred frame) and before GridSamplePoints,
+# so pasted points get the same voxel decimation as real ones. GT polylines are
+# left untouched on purpose: the model must infer map elements under traffic.
+actor_catalogue = None
+actor_paste = dict(
+    type='CarlaActorPaste',
+    catalogue=actor_catalogue,
+    n_vehicles=(0, 5),
+    n_pedestrians=(0, 6),
+    prob=0.8)
+
 train_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
-        load_dim=4,
-        use_dim=4,
+        # xyz only -- see the in_channels=3 note on the model above. With
+        # load_dim=3 the loader skips building the BT.709 strength column
+        # entirely instead of building and discarding it.
+        load_dim=3,
+        use_dim=3,
         z_max=96.0),
     dict(
         type='GridSamplePoints',
@@ -148,13 +183,15 @@ train_pipeline = [
         class_names=map_classes),
     dict(type='CustomCollect3D', keys=['points'])
 ]
+if actor_catalogue is not None:
+    train_pipeline.insert(1, actor_paste)
 
 test_pipeline = [
     dict(
         type='LoadCarlaPointsFromFile',
         coord_type='LIDAR',
-        load_dim=4,
-        use_dim=4,
+        load_dim=3,
+        use_dim=3,  # colour-free, matching train_pipeline
         z_max=96.0),
     dict(
         type='GridSamplePoints',

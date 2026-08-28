@@ -74,8 +74,12 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
         # dataset reads/writes live (e.g. "data/carla/"), while the raw
         # tiles (.npz blocks) that tools/gemap/custom_carla_map_converter.py
         # was pointed at with --data-root can be a different directory
-        # entirely. Defaults to data_root for the common case where they
-        # coincide.
+        # entirely. When not set explicitly, load_annotations prefers the
+        # data_root recorded in the pkl (what lidar_path is actually
+        # relative to -- the MapTRv2 sibling repo's converter records it as
+        # an absolute path exactly for this), falling back to data_root for
+        # older pkls that record none or a stale one.
+        self._raw_data_root_arg = raw_data_root
         self.raw_data_root = raw_data_root if raw_data_root is not None else data_root
         self.code_size = code_size
         self.bev_size = bev_size
@@ -114,10 +118,44 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
 
     def load_annotations(self, ann_file):
         data = mmcv.load(ann_file, file_format='pkl')
-        self.annotation_frame = data.get('annotation_frame')
+        # Frame key: this converter writes `annotation_frame`; the MapTRv2
+        # benchmark repo's writes `gt_frame` (and its per-sample shift under
+        # the opposite sign -- adapted below). Accepting both lets one pkl
+        # serve every sibling repo.
+        self.annotation_frame = (data.get('annotation_frame')
+                                 or data.get('gt_frame'))
         self.tile_geometry = data.get('tile_geometry') or {}
         self._check_tile_geometry(ann_file)
-        return sorted(data['samples'], key=lambda e: e['sample_idx'])
+        # No explicit raw_data_root in the config: prefer the data_root the
+        # converter recorded in the pkl (what lidar_path is relative to) --
+        # but only when that path exists here, since a pkl converted on
+        # another machine records that machine's path.
+        pkl_root = data.get('data_root')
+        if self._raw_data_root_arg is None and pkl_root and \
+                os.path.isdir(pkl_root):
+            self.raw_data_root = pkl_root
+        samples = sorted(data['samples'], key=lambda e: e['sample_idx'])
+        return [self._adapt_sample_keys(s) for s in samples]
+
+    @staticmethod
+    def _adapt_sample_keys(sample):
+        """Accept the MapTRv2 benchmark repo's per-sample frame bookkeeping.
+
+        Its converter records ``lidar_recenter_shift = offset - tile_center``
+        (which its loader ADDS to the stored points); this repo's records
+        ``recenter_shift = tile_center - offset`` (which
+        ``LoadCarlaPointsFromFile`` SUBTRACTS). Same vector, opposite sign
+        and key -- verified upstream that the two converters' GT arrays are
+        bit-identical, so negating the shift is the whole difference. A
+        sample already carrying ``recenter_shift`` is returned untouched.
+        """
+        if 'recenter_shift' not in sample and \
+                sample.get('lidar_recenter_shift') is not None:
+            sample = dict(sample)
+            sample['recenter_shift'] = [
+                -v for v in sample['lidar_recenter_shift']
+            ]
+        return sample
 
     def _check_tile_geometry(self, ann_file):
         """Fail fast when the pkl's tile geometry and the config disagree.
