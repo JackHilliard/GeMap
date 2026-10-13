@@ -32,6 +32,29 @@ from .av2_offlinemap_dataset import (LiDARInstanceLines,
                                      VectorizedAV2LocalMap, output_to_vecs)
 
 
+class VectorizedCarlaLocalMap(VectorizedAV2LocalMap):
+    """``VectorizedAV2LocalMap`` with a label mapping built from the config.
+
+    The AV2 base hardcodes ``CLASS2LABEL`` to nuScenes/AV2 class names
+    ('divider', 'ped_crossing', 'boundary', 'centerline'), and
+    ``gen_vectorized_samples`` drops any annotation key that maps to -1. A
+    CARLA taxonomy of its own -- 'driving'/'curb', say -- would therefore
+    vectorize to *zero* instances with no error, which is the failure mode
+    this class exists to remove: labels are simply the position of each name
+    in ``map_classes``.
+
+    For the single-class ``['divider']`` configs that is ``{'divider': 0}``,
+    i.e. bit-identical to the base's behaviour.
+    """
+
+    def __init__(self, *args, map_classes=('divider', ), **kwargs):
+        super().__init__(*args, map_classes=map_classes, **kwargs)
+        self.CLASS2LABEL = {
+            name: label
+            for label, name in enumerate(self.vec_classes)
+        }
+
+
 @DATASETS.register_module()
 class CustomCarlaLocalMapDataset(Custom3DDataset):
     """CARLA simulator dataset with vectorized map (divider) ground truth."""
@@ -96,7 +119,7 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
         self.eval_use_same_gt_sample_num_flag = eval_use_same_gt_sample_num_flag
         self.aux_seg = aux_seg
         self.eval_nproc = eval_nproc
-        self.vector_map = VectorizedAV2LocalMap(
+        self.vector_map = VectorizedCarlaLocalMap(
             canvas_size=bev_size,
             patch_size=self.patch_size,
             map_classes=self.MAPCLASSES,

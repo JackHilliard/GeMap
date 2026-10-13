@@ -138,3 +138,38 @@ both previously-measured values exactly (25/0.1+1 = 251, 168/0.4+1 = 421).
   Before a real training run, consider `--classes driving_centerline`.
 * **The 60 m export has no train/val split** — it is a single 30-tile grid,
   useful for verifying size-independence, not for training.
+
+## 50 m rotated-crop benchmark (2026-10-13)
+
+Ported from the MapTRv2 repo's `maptrv2` branch
+(`projects/mmdet3d_plugin/datasets/carla50m_crop_dataset.py` there). The
+tiles on disk are **50 m** (`tile_radius` 25, e.g. `../carla_test_V2`); the
+model is the unchanged 30 m one, because every crop it sees is a 30 m tile.
+
+- `CustomCarla50mCropDataset` + `LoadCarla50mCrop`
+  (`projects/mmdet3d_plugin/datasets/carla50m_crop_dataset.py`) read the
+  export's `<split>/manifest.json` directly -- **no converter pkl**, so none
+  of the pkl bookkeeping (frame key, tile-geometry assert, `recenter_shift`,
+  `raw_data_root`) applies. `data_root` is the export root. Per
+  `__getitem__`: uniform yaw about the tile centre, centre shift up to
+  3.79 m (25 - 15*sqrt2), 30 m crop, sigma 0.02 m point noise; GT gets the
+  same pose and is clipped with the tiler's own `clip_polyline_to_box`.
+- **Eval crops are frozen by `crop_seed`** (no yaw, no noise, aimed at GT so
+  they are non-empty) because `_format_gt()` caches the GT json once. Delete
+  `carla_map_gt_50m_crop_2cls.json` whenever the tile set, crop kwargs or
+  seed change. On `../carla_test_V2` (2170 tiles) 0 frozen crops are
+  GT-empty.
+- Config: `projects/configs/carla/gemap_carla_r50_24ep_lidar_50m_crop.py`,
+  overlay on the 30 m config. Classes `['driving', 'curb']` (export names,
+  label order = list order); `aux_seg.seg_classes=2` on both the model and
+  `data.train` side.
+- `VectorizedCarlaLocalMap` (`carla_offlinemap_dataset.py`) builds
+  `CLASS2LABEL` from `map_classes` -- the AV2 base's hardcoded nuScenes names
+  would vectorise `driving`/`curb` to **zero instances with no error**. It is
+  bit-identical for `['divider']`.
+- `_evaluate_single` adds per-class precision/recall/F1 and matched chamfer
+  (`carla50m_metrics.py`) to the usual `CarlaMap_chamfer/*` keys.
+- Verify: `python3 tools/gemap/verify_crop_dataset.py <config> --data-root
+  <export>` (GT-to-LiDAR distance, quadrant occupancy, yaw histogram, val
+  determinism). Smoke-tested 2026-10-13 in `gemap:latest` on a 34-tile
+  subset: median GT-to-LiDAR 0.023 m, 1 epoch train + eval end-to-end.
