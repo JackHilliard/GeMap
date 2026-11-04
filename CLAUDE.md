@@ -173,3 +173,22 @@ model is the unchanged 30 m one, because every crop it sees is a 30 m tile.
   <export>` (GT-to-LiDAR distance, quadrant occupancy, yaw histogram, val
   determinism). Smoke-tested 2026-10-13 in `gemap:latest` on a 34-tile
   subset: median GT-to-LiDAR 0.023 m, 1 epoch train + eval end-to-end.
+
+## HRDX San Jose 50 m benchmark (2026-10-29)
+
+Real-LiDAR counterpart of the CARLA 50 m crop benchmark, ported from the
+MapTRv2 repo (see its CLAUDE.md section of the same name for the data facts).
+`CustomSanJose50mCropDataset` (`datasets/sanjose50m_crop_dataset.py`)
+subclasses `CustomCarla50mCropDataset`: flat export (`split=None`, `ann_file`
+= a `../san_jose_splits_v1/v1/*.json` manifest, `data_root` =
+`data/san_jose_50m/`), `gt_classes=('curb',)` (never add `curb_parametric`,
+it re-traces the same curbs), and a check of the manifest's `finalize` block
+against `crop_seed`/`max_shift`/`gt_classes` -- the splits guarantee non-empty
+>= 1000-point frozen crops only for `crop_seed=0`, `rotate=False`,
+`translate=True` in manifest order. Config
+`projects/configs/carla/gemap_sanjose_r50_24ep_lidar_50m_crop.py` (+ `_smoke`
+on `v1_smoke`), one class, `aux_seg.seg_classes=1`, separate `map_ann_file`
+per frozen split under `data/carla30/` (val != test here). Verified in
+`gemap:latest` on the 4 local tiles (`tools/gemap/verify_crop_dataset.py
+--ann-file-train/--ann-file-val`, then 1 epoch train+eval). Cluster script:
+`~/submit_scripts/run_gemap_sanjose.sh` (batch 16, no converter step).

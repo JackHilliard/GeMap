@@ -28,12 +28,15 @@ from projects.mmdet3d_plugin.datasets.carla50m_crop_dataset import \
     LoadCarla50mCrop
 
 
-def build(cfg, key, data_root):
+def build(cfg, key, data_root, ann_file=None):
     d = dict(cfg.data[key])
     d['pipeline'] = []
     if data_root:
         d['data_root'] = data_root
-        d['ann_file'] = f"{data_root.rstrip('/')}/{d['split']}/manifest.json"
+        if d.get('split'):            # CARLA <split>/manifest.json layout
+            d['ann_file'] = f"{data_root.rstrip('/')}/{d['split']}/manifest.json"
+    if ann_file:                      # flat exports (San Jose) take it directly
+        d['ann_file'] = ann_file
     return build_dataset(d)
 
 
@@ -42,6 +45,10 @@ def main():
     ap.add_argument('config')
     ap.add_argument('--data-root', default=None,
                     help='override the config\'s data_root (export root)')
+    ap.add_argument('--ann-file-train', default=None,
+                    help='override data.train.ann_file (e.g. a San Jose split json)')
+    ap.add_argument('--ann-file-val', default=None,
+                    help='override data.val.ann_file')
     ap.add_argument('--n', type=int, default=40, help='crops to sample')
     args = ap.parse_args()
     warnings.filterwarnings('ignore')
@@ -49,8 +56,8 @@ def main():
     classes = list(cfg.data.train.map_classes)
 
     print('=' * 78 + '\n1. BUILD\n' + '=' * 78)
-    tr = build(cfg, 'train', args.data_root)
-    te = build(cfg, 'val', args.data_root)
+    tr = build(cfg, 'train', args.data_root, args.ann_file_train)
+    te = build(cfg, 'val', args.data_root, args.ann_file_val)
     print(f'  train: {len(tr)} samples   val: {len(te)} samples   '
           f'classes: {classes}')
     print(f'  train max_shift={tr.max_shift:.3f} m  need={tr._need:.3f} m')
