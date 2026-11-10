@@ -9,8 +9,9 @@ from .carlasim_segment import CarlaSegDataset
 from .carla_offlinemap_dataset import CustomCarlaLocalMapDataset
 from .carla50m_crop_dataset import CustomCarla50mCropDataset, LoadCarla50mCrop
 from .sanjose50m_crop_dataset import CustomSanJose50mCropDataset
+from .hrdx50m_dataset import CustomHrdx50mDataset, LoadHrdx50mTile
 __all__ = [
     'CustomNuScenesDataset','CustomNuScenesLocalMapDataset', 'CarlaSegDataset',
     'CustomCarlaLocalMapDataset', 'CustomCarla50mCropDataset', 'LoadCarla50mCrop',
-    'CustomSanJose50mCropDataset'
+    'CustomSanJose50mCropDataset', 'CustomHrdx50mDataset', 'LoadHrdx50mTile'
 ]
