@@ -18,6 +18,7 @@ the pkl's own ``tile_geometry``.
 import json
 import os
 import tempfile
+import warnings
 from os import path as osp
 
 import mmcv
@@ -30,6 +31,7 @@ from mmdet3d.datasets.custom_3d import Custom3DDataset
 
 from .av2_offlinemap_dataset import (LiDARInstanceLines,
                                      VectorizedAV2LocalMap, output_to_vecs)
+from .pipelines.loading import EmptyLidarTileError
 
 
 class VectorizedCarlaLocalMap(VectorizedAV2LocalMap):
@@ -106,6 +108,9 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
         self.raw_data_root = raw_data_root if raw_data_root is not None else data_root
         self.code_size = code_size
         self.bev_size = bev_size
+        # Counts consecutive samples skipped by the runtime empty-tile guard
+        # in prepare_train_data -- see the comment there.
+        self._consecutive_empty_skips = 0
         self.MAPCLASSES = self.get_map_classes(map_classes)
         self.NUM_MAPCLASSES = len(self.MAPCLASSES)
         self.pc_range = pc_range
@@ -284,7 +289,22 @@ class CustomCarlaLocalMapDataset(Custom3DDataset):
         if input_dict is None:
             return None
         self.pre_pipeline(input_dict)
-        example = self.pipeline(input_dict)
+        try:
+            example = self.pipeline(input_dict)
+        except EmptyLidarTileError as e:
+            # A sample with no LiDAR point in the voxelizer's range (on the
+            # 50 m crop datasets: a freshly drawn train crop over a coverage
+            # gap). Returning None makes Custom3DDataset.__getitem__ resample
+            # another index -- but if the *config's* range is wrong then every
+            # sample is empty and that would spin forever, so give up after a
+            # run of them.
+            self._consecutive_empty_skips += 1
+            if self._consecutive_empty_skips > 100:
+                raise
+            warnings.warn(f'{self.__class__.__name__}: skipping sample '
+                          f'{input_dict["sample_idx"]} -- {e}')
+            return None
+        self._consecutive_empty_skips = 0
         example = self.vectormap_pipeline(example, input_dict)
         if self.filter_empty_gt and \
                 (example is None or

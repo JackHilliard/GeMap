@@ -4,9 +4,9 @@ from .transform_3d import (
     CarlaActorPaste)
 from .formating import CustomDefaultFormatBundle3D
 
-from .loading import CustomLoadPointsFromFile, CustomLoadPointsFromMultiSweeps, CustomLoadMultiViewImageFromFiles, CustomPointToMultiViewDepth, LoadCarlaPointsFromFile, GridSamplePoints
+from .loading import CustomLoadPointsFromFile, CustomLoadPointsFromMultiSweeps, CustomLoadMultiViewImageFromFiles, CustomPointToMultiViewDepth, LoadCarlaPointsFromFile, GridSamplePoints, EmptyLidarTileError
 __all__ = [
     'PadMultiViewImage', 'NormalizeMultiviewImage',
     'PhotoMetricDistortionMultiViewImage', 'CustomDefaultFormatBundle3D', 'CustomCollect3D', 'RandomScaleImageMultiViewImage',
-    'LoadCarlaPointsFromFile', 'GridSamplePoints', 'CarlaActorPaste'
+    'LoadCarlaPointsFromFile', 'GridSamplePoints', 'EmptyLidarTileError', 'CarlaActorPaste'
 ]

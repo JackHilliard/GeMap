@@ -139,6 +139,15 @@ data = dict(
         pipeline=train_pipeline,
         map_classes=map_classes,
         aux_seg=aux_seg_cfg,
+        # Train-time sample filter (real LiDAR has coverage gaps): a freshly
+        # drawn crop must hold >= the manifest's filters.min_points RAW points
+        # (20000 for san_jose_tiles_50m, read from the split json) and >= 1
+        # curb, else LoadCarla50mCrop raises EmptyLidarTileError /
+        # filter_empty_gt drops it and prepare_train_data resamples another
+        # tile. Never applied to the frozen val/test crops (>= 1000 points by
+        # sj_finalize_splits.py; skipping would shrink the eval set).
+        min_crop_points='manifest',
+        filter_empty_gt=True,
         **crop_train),
     val=dict(
         type=dataset_type,
