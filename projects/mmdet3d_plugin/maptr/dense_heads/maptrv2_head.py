@@ -129,6 +129,7 @@ class MapTRv2Head(DETRHead):
                               pos_weight=2.13,
                               loss_weight=1.0),
                  loss_dir=dict(type='PtsDirCosLoss', loss_weight=2.0),
+                 loss_geo=None,
                  **kwargs):
 
         self.bev_h = bev_h
@@ -177,6 +178,13 @@ class MapTRv2Head(DETRHead):
             self.code_weights, requires_grad=False), requires_grad=False)
         self.loss_pts = build_loss(loss_pts)
         self.loss_dir = build_loss(loss_dir)
+        # GeMap's Euclidean shape + relation loss (GeometricLoss, as GeMapFullHead uses it); None =
+        # off (plain MapTRv2). Applied to the one-to-one queries only: GeMap has no one-to-many
+        # branch, and the relation term needs the per-sample instance count (loss_geo.num_ins)
+        self.loss_geo = build_loss(loss_geo) if loss_geo is not None else None
+        if self.loss_geo is not None:
+            assert self.loss_geo.num_ins == num_vec_one2one, (self.loss_geo.num_ins, num_vec_one2one)
+            assert self.loss_geo.num_pts == num_pts_per_gt_vec, (self.loss_geo.num_pts, num_pts_per_gt_vec)
 
 
         num_query = num_vec * num_pts_per_vec
@@ -744,13 +752,21 @@ class MapTRv2Head(DETRHead):
             bboxes[isnotnan, :4], bbox_targets[isnotnan, :4], bbox_weights[isnotnan, :4], 
             avg_factor=num_total_pos)
 
+        # GeMap's geometric loss, exactly as GeMapFullHead.loss_single calls it: normalised
+        # predictions, metric targets (the loss normalises them), unmatched queries excluded by
+        # their background label. Only on one-to-one outputs (see __init__)
+        loss_geo = pts_preds.new_zeros(())
+        if self.loss_geo is not None and num_imgs * self.num_vec_one2one == labels.numel():
+            loss_geo = self.loss_geo(pts_preds, pts_targets, labels)
+
         if digit_version(TORCH_VERSION) >= digit_version('1.8'):
             loss_cls = torch.nan_to_num(loss_cls)
             loss_bbox = torch.nan_to_num(loss_bbox)
             loss_iou = torch.nan_to_num(loss_iou)
             loss_pts = torch.nan_to_num(loss_pts)
             loss_dir = torch.nan_to_num(loss_dir)
-        return loss_cls, loss_bbox, loss_iou, loss_pts, loss_dir
+            loss_geo = torch.nan_to_num(loss_geo)
+        return loss_cls, loss_bbox, loss_iou, loss_pts, loss_dir, loss_geo
 
     @force_fp32(apply_to=('preds_dicts'))
     def loss(self,
@@ -838,7 +854,7 @@ class MapTRv2Head(DETRHead):
             gt_bboxes_ignore for _ in range(num_dec_layers)
         ]
         # import pdb;pdb.set_trace()
-        losses_cls, losses_bbox, losses_iou, losses_pts, losses_dir = multi_apply(
+        losses_cls, losses_bbox, losses_iou, losses_pts, losses_dir, losses_geo = multi_apply(
             self.loss_single, all_cls_scores, all_bbox_preds,all_pts_preds,
             all_gt_bboxes_list, all_gt_labels_list,all_gt_shifts_pts_list,
             all_gt_bboxes_ignore_list)
@@ -868,7 +884,7 @@ class MapTRv2Head(DETRHead):
                 for i in range(len(all_gt_labels_list))
             ]
             # TODO bug here
-            enc_loss_cls, enc_losses_bbox, enc_losses_iou, enc_losses_pts, enc_losses_dir = \
+            enc_loss_cls, enc_losses_bbox, enc_losses_iou, enc_losses_pts, enc_losses_dir, _ = \
                 self.loss_single(enc_cls_scores, enc_bbox_preds, enc_pts_preds,
                                  gt_bboxes_list, binary_labels_list, gt_pts_list,gt_bboxes_ignore)
             loss_dict['enc_loss_cls'] = enc_loss_cls
@@ -883,6 +899,9 @@ class MapTRv2Head(DETRHead):
         loss_dict['loss_iou'] = losses_iou[-1]
         loss_dict['loss_pts'] = losses_pts[-1]
         loss_dict['loss_dir'] = losses_dir[-1]
+        with_geo = self.loss_geo is not None and all_cls_scores.size(2) == self.num_vec_one2one
+        if with_geo:
+            loss_dict['loss_geo'] = losses_geo[-1]
         # loss from other decoder layers
         num_dec_layer = 0
         for loss_cls_i, loss_bbox_i, loss_iou_i, loss_pts_i, loss_dir_i in zip(losses_cls[:-1],
@@ -895,6 +914,8 @@ class MapTRv2Head(DETRHead):
             loss_dict[f'd{num_dec_layer}.loss_iou'] = loss_iou_i
             loss_dict[f'd{num_dec_layer}.loss_pts'] = loss_pts_i
             loss_dict[f'd{num_dec_layer}.loss_dir'] = loss_dir_i
+            if with_geo:
+                loss_dict[f'd{num_dec_layer}.loss_geo'] = losses_geo[num_dec_layer]
             num_dec_layer += 1
         return loss_dict
 

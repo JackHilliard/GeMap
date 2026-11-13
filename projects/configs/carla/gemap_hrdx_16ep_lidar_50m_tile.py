@@ -24,10 +24,20 @@ mapdiffusion, SuperMapNet -- change it in all five or in none):
             warmup, batch 2 x 8 accumulated iterations (effective 16), fp16 with a fixed loss
             scale, gradient clipping at 35, checkpoint every epoch (keep 4)
 
-GeMap specifics (the only differences from the MapTRv2 config): GeMapNMSFreeCoder and
-GeMapAssigner, as in every other LiDAR config of this repo (gemap_carla_r50_24ep_lidar*.py,
-gemap_sanjose_r50_24ep_lidar_50m_crop.py). Learning rate 6e-4, the repo's own and the
-reference's.
+GeMap specifics (the only differences from the MapTRv2 config):
+  * loss_geo: GeMap's geometric loss (Euclidean shape + relation, GeometricLoss), with the
+    values of every GeMap config in this repo (gemap/gemap_full_*.py: weight 0.005, intra
+    and inter 1.0, L1), on the one-to-one queries. The LiDAR configs before this one ran
+    without it: GeMap's own detector has no LiDAR-only branch, so the LiDAR path uses the
+    MapTRv2 head copied in from MapTRv2 (maptr/), which had no geometric loss -- those runs
+    were MapTRv2. num_classes=1: unmatched queries carry the background label 1 and must
+    be excluded from the loss (its default, 3, is nuScenes').
+  * GeMapNMSFreeCoder and GeMapAssigner: line-for-line copies of MapTR's coder and assigner
+    under GeMap names (no behavioural difference).
+  * NOT ported: Geometry-Decoupled Attention (GeMap's decoder self-attention). The decoder
+    keeps MapTRv2's decoupled self-attention, and the one-to-many branch (GeMap has none)
+    stays on as in the MapTRv2 reference.
+  Learning rate 6e-4, the repo's own and the reference's.
 
 GT caches (map_ann_file) are written at the first evaluation and checked against the dataset
 at every later construction.
@@ -314,6 +324,16 @@ model = dict(
         loss_pts=dict(type='PtsL1Loss', loss_weight=5.0),
         loss_dir=dict(type='PtsDirCosLoss', loss_weight=0.005),
         loss_seg=dict(type='SimpleLoss', pos_weight=4.0, loss_weight=1.0),
+        loss_geo=dict(
+            type='GeometricLoss',
+            loss_weight=0.005,
+            intra_loss_weight=1.0,
+            inter_loss_weight=1.0,
+            num_ins=num_vec,
+            num_pts=fixed_ptsnum_per_pred_line,
+            num_classes=num_map_classes,
+            pc_range=point_cloud_range,
+            loss_type='l1'),
         loss_pv_seg=dict(type='SimpleLoss', pos_weight=1.0, loss_weight=2.0)),
     train_cfg=dict(
         pts=dict(
